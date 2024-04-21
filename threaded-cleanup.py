@@ -1,4 +1,5 @@
 import boto3
+import threading
 
 def list_ec2_instances(session, region):
     ec2 = session.resource('ec2')
@@ -30,30 +31,56 @@ def list_kms_keys(session, region):
     paginator = kms.get_paginator('list_keys')
     keys = []
     for page in paginator.paginate():
-        keys.extend([(key['KeyId'], 'KMS Key') for key in page['Keys']])
+        for key in page['Keys']:
+            key_details = kms.describe_key(KeyId=key['KeyId'])
+            if key_details['KeyMetadata']['KeyManager'] == 'CUSTOMER':
+                keys.append((key['KeyId'], 'KMS Key'))
     return keys
 
+def delete_resource(session, resource_id, resource_type, region, deletion_status):
+    try:
+        if resource_type == 'EC2 Instance':
+            ec2 = session.resource('ec2')
+            instance = ec2.Instance(resource_id)
+            instance.terminate()
+            deletion_status[resource_id] = 'Deleted'
+        # Continue for other resource types...
+    except Exception as e:
+        deletion_status[resource_id] = f'Error: {str(e)}'
+
 def main():
-    print("{:<20} {:<50} {:<15}".format('Region', 'Resource ID', 'Resource Type'))
-    print("-" * 85)
-    
+    print("Do you want to delete all deletable resources? (yes/no)")
+    global_decision = input().lower() == 'yes'
+    print("{:<20} {:<50} {:<15} {:<10}".format('Region', 'Resource ID', 'Resource Type', 'Deleted'))
+    print("-" * 95)
+
     ec2_client = boto3.client('ec2')
     regions = [region['RegionName'] for region in ec2_client.describe_regions()['Regions']]
-    
+
     for region in regions:
         session = boto3.Session(region_name=region)
-        resources = list_ec2_instances(session, region)
+        resources = []
+        resources += list_ec2_instances(session, region)
         resources += list_s3_buckets(session, region)
         resources += list_rds_instances(session, region)
         resources += list_data_lakes(session, region)
         resources += list_lambda_functions(session, region)
         resources += list_kms_keys(session, region)
 
+        deletion_status = {}
+
         if not resources:
-            print(f"{region:<20} {'No resources found.':<50} {'N/A':<15}")
+            print(f"{region:<20} {'No resources found.':<50} {'N/A':<15} {'N/A':<10}")
         else:
+            threads = []
             for resource_id, resource_type in resources:
-                print("{:<20} {:<50} {:<15}".format(region, resource_id, resource_type))
+                if global_decision:
+                    t = threading.Thread(target=delete_resource, args=(session, resource_id, resource_type, region, deletion_status))
+                    t.start()
+                    threads.append(t)
+                print("{:<20} {:<50} {:<15} {:<10}".format(region, resource_id, resource_type, deletion_status.get(resource_id, 'Not Deleted')))
+            for t in threads:
+                t.join()  # Ensure all threads have completed
 
 if __name__ == "__main__":
     main()

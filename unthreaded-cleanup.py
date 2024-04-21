@@ -31,51 +31,52 @@ def list_kms_keys(session, region):
     keys = []
     for page in paginator.paginate():
         for key in page['Keys']:
-            # Fetch the key details to check if it's an AWS-managed key
             key_details = kms.describe_key(KeyId=key['KeyId'])
-            # Check if the key is customer-managed
-            if key_details['KeyMetadata']['KeyManager'] == 'CUSTOMER':
+            if key_details['KeyMetadata']['KeyManager'] == 'CUSTOMER' and key_details['KeyMetadata']['KeyState'] != 'PendingDeletion':
                 keys.append((key['KeyId'], 'KMS Key'))
     return keys
 
 def delete_resource(session, resource_id, resource_type, region):
-    if resource_type == 'EC2 Instance':
-        ec2 = session.resource('ec2')
-        instance = ec2.Instance(resource_id)
-        instance.terminate()
-        print(f'Terminated EC2 instance {resource_id} in {region}.')
-    elif resource_type == 'S3 Bucket':
-        s3 = session.resource('s3')
-        bucket = s3.Bucket(resource_id)
-        bucket.objects.all().delete()
-        bucket.delete()
-        print(f'Deleted S3 bucket {resource_id} in {region}.')
-    elif resource_type == 'Lambda Function':
-        lambda_client = session.client('lambda')
-        lambda_client.delete_function(FunctionName=resource_id)
-        print(f'Deleted Lambda function {resource_id} in {region}.')
-    elif resource_type == 'Data Lake (Glue Database)':
-        glue = session.client('glue')
-        glue.delete_database(Name=resource_id)
-        print(f'Deleted Data Lake (Glue Database) {resource_id} in {region}.')
-    elif resource_type == 'RDS Instance':
-        rds = session.client('rds')
-        rds.delete_db_instance(DBInstanceIdentifier=resource_id, SkipFinalSnapshot=True)
-        print(f'Deleted RDS instance {resource_id} in {region}.')
-    elif resource_type == 'KMS Key':
-        kms = session.client('kms')
-        kms.schedule_key_deletion(KeyId=resource_id, PendingWindowInDays=7)
-        print(f'Scheduled deletion for KMS Key {resource_id} in {region}.')
+    try:
+        if resource_type == 'EC2 Instance':
+            ec2 = session.resource('ec2')
+            instance = ec2.Instance(resource_id)
+            instance.terminate()
+            print(f'Terminated EC2 instance {resource_id} in {region}.')
+        elif resource_type == 'S3 Bucket':
+            s3 = session.resource('s3')
+            bucket = s3.Bucket(resource_id)
+            bucket.objects.all().delete()
+            bucket.delete()
+            print(f'Deleted S3 bucket {resource_id} in {region}.')
+        elif resource_type == 'Lambda Function':
+            lambda_client = session.client('lambda')
+            lambda_client.delete_function(FunctionName=resource_id)
+            print(f'Deleted Lambda function {resource_id} in {region}.')
+        elif resource_type == 'Data Lake (Glue Database)':
+            glue = session.client('glue')
+            glue.delete_database(Name=resource_id)
+            print(f'Deleted Data Lake (Glue Database) {resource_id} in {region}.')
+        elif resource_type == 'RDS Instance':
+            rds = session.client('rds')
+            rds.delete_db_instance(DBInstanceIdentifier=resource_id, SkipFinalSnapshot=True)
+            print(f'Deleted RDS instance {resource_id} in {region}.')
+        elif resource_type == 'KMS Key':
+            kms = session.client('kms')
+            kms.schedule_key_deletion(KeyId=resource_id, PendingWindowInDays=7)
+            print(f'Scheduled deletion for KMS Key {resource_id} in {region}.')
+    except Exception as e:
+        print(f"Error deleting {resource_type} '{resource_id}' in {region}: {str(e)}")
 
-def confirm_and_delete(session, resources, region):
+def confirm_and_delete(session, resources, region, auto_delete):
     for resource_id, resource_type in resources:
-        response = input(f"Delete {resource_type} '{resource_id}' in {region}? (yes/no): ")
-        if response.lower() == 'yes':
+        if auto_delete:
             delete_resource(session, resource_id, resource_type, region)
         else:
             print(f"Skipped {resource_type} '{resource_id}' in {region}.")
 
 def main():
+    global_decision = input("Delete all resources where possible? (yes/no): ").lower() == 'yes'
     print("{:<20} {:<50} {:<15}".format('Region', 'Resource ID', 'Resource Type'))
     print("-" * 85)
     
@@ -97,7 +98,7 @@ def main():
         else:
             for resource_id, resource_type in resources:
                 print("{:<20} {:<50} {:<15}".format(region, resource_id, resource_type))
-            confirm_and_delete(session, resources, region)
+            confirm_and_delete(session, resources, region, global_decision)
 
 if __name__ == "__main__":
     main()
