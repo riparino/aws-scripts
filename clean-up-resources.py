@@ -30,7 +30,12 @@ def list_kms_keys(session, region):
     paginator = kms.get_paginator('list_keys')
     keys = []
     for page in paginator.paginate():
-        keys.extend([(key['KeyId'], 'KMS Key') for key in page['Keys']])
+        for key in page['Keys']:
+            # Fetch the key details to check if it's an AWS-managed key
+            key_details = kms.describe_key(KeyId=key['KeyId'])
+            # Check if the key is customer-managed
+            if key_details['KeyMetadata']['KeyManager'] == 'CUSTOMER':
+                keys.append((key['KeyId'], 'KMS Key'))
     return keys
 
 def delete_resource(session, resource_id, resource_type, region):
